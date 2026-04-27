@@ -1,0 +1,79 @@
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# =========================
+# OS / System files
+# =========================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# =========================
+# IDE / Editors
+# =========================
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# =========================
+# Logs
+# =========================
+*.log
+
+# =========================
+# Data (IMPORTANT)
+# =========================
+data/raw/
+data/processed/
+data/splits/
+
+# =========================
+# Model artifacts
+# =========================
+artifacts/models/
+*.pt
+*.pth
+*.ckpt
+
+# =========================
+# Outputs / plots
+# =========================
+artifacts/plots/
+artifacts/confusion_matrices/
+artifacts/reports/
+
+# =========================
+# Notebooks checkpoints
+# =========================
+.ipynb_checkpoints/
+
+# =========================
+# Environment / secrets
+# =========================
+.env
+
+# =========================
+# Streamlit cache
+# =========================
+.streamlit/
+
+# =========================
+# Temporary files
+# =========================
+*.tmp
+*.temp
+
+# =========================
+# Misc
+# =========================
+*.zip
