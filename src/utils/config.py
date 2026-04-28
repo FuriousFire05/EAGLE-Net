@@ -2,7 +2,7 @@
 
 CONFIG = {
     "model": {
-        "name": "baseline_cnn",  # change this only
+        "name": "eagle_net",# change this only
         "num_classes": 10
     },
 

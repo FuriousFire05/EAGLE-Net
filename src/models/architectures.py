@@ -286,23 +286,17 @@ class EAGLENet(nn.Module):
         return x
 
 
-def create_model(model_name='eager_net', num_classes=10):
-    """
-    Create and return model.
-    
-    Args:
-        model_name (str): 'baseline_cnn', 'lightweight_cnn', or 'eager_net'
-        num_classes (int): Number of output classes
-    
-    Returns:
-        nn.Module: Model instance
-    """
-    if model_name == 'baseline_cnn':
+def create_model(model_name="eagle_net", num_classes=10):
+    if model_name == "baseline_cnn":
         return BaselineCNN(num_classes)
-    elif model_name == 'lightweight_cnn':
+    
+    elif model_name == "lightweight_cnn":
         return LightweightCNN(num_classes)
-    elif model_name == 'eager_net':
+    
+    # support both temporarily (backward compatibility)
+    elif model_name in ["eagle_net", "eager_net"]:
         return EAGLENet(num_classes)
+    
     else:
         raise ValueError(f"Unknown model: {model_name}")
 
