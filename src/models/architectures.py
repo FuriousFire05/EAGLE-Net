@@ -148,13 +148,11 @@ class BlurPool(nn.Module):
         self.register_buffer("kernel", kernel)
 
     def forward(self, x):
-        padding = self.kernel.size(-1) // 2
-
         return F.conv2d(
             x,
             self.kernel,
             stride=self.stride,
-            padding=padding,
+            padding=1,
             groups=x.size(1),
         )
 
@@ -221,7 +219,6 @@ class DualKernelInvertedResidual(nn.Module):
         hidden_channels = in_channels * expansion
         branch_channels = hidden_channels // 2
         other_channels = hidden_channels - branch_channels
-
         self.use_residual = stride == 1 and in_channels == out_channels
 
         self.expand = nn.Sequential(
@@ -251,10 +248,10 @@ class DualKernelInvertedResidual(nn.Module):
                 other_channels,
                 kernel_size=5,
                 padding=2,
-                groups=other_channels,
+                groups=hidden_channels - branch_channels,
                 bias=False,
             ),
-            nn.BatchNorm2d(other_channels),
+            nn.BatchNorm2d(hidden_channels - branch_channels),
             nn.ReLU(inplace=True),
         )
 
@@ -271,9 +268,9 @@ class DualKernelInvertedResidual(nn.Module):
         x = self.expand(x)
         x = self.blur(x)
 
-        c_half = x.size(1) // 2
-        x3 = x[:, :c_half, :, :]
-        x5 = x[:, c_half:, :, :]
+        c = x.size(1)
+        c_half = c // 2
+        x3, x5 = x[:, :c_half, :, :], x[:, c_half:, :, :]
 
         x = torch.cat([self.dw3(x3), self.dw5(x5)], dim=1)
         x = self.se(x)
@@ -302,7 +299,7 @@ class EAGLENet(nn.Module):
         super().__init__()
 
         self.stem = nn.Sequential(
-            nn.Conv2d(3, 32, kernel_size=3, padding=1, bias=False),
+            nn.Conv2d(3, 32, kernel_size=3, padding = self.kernel.size(-1) // 2, bias=False),
             nn.BatchNorm2d(32),
             nn.ReLU(inplace=True),
         )
