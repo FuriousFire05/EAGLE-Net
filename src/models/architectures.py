@@ -59,11 +59,6 @@ class BaselineCNN(nn.Module):
 
 
 class DepthwiseSeparableConv(nn.Module):
-    """
-    Depthwise separable convolution:
-    depthwise spatial filtering + pointwise channel mixing.
-    """
-
     def __init__(self, in_channels, out_channels, stride=1):
         super().__init__()
 
@@ -95,11 +90,6 @@ class DepthwiseSeparableConv(nn.Module):
 
 
 class LightweightCNN(nn.Module):
-    """
-    Lightweight CNN using depthwise separable convolutions.
-    This is the deployment-efficiency reference model.
-    """
-
     def __init__(self, num_classes=10):
         super().__init__()
 
@@ -132,10 +122,6 @@ class LightweightCNN(nn.Module):
 
 
 class BlurPool(nn.Module):
-    """
-    Anti-aliased downsampling with a fixed binomial blur kernel.
-    """
-
     def __init__(self, channels, stride=2):
         super().__init__()
         self.stride = stride
@@ -148,20 +134,18 @@ class BlurPool(nn.Module):
         self.register_buffer("kernel", kernel)
 
     def forward(self, x):
+        padding = self.kernel.size(-1) // 2  # ✅ FIXED
+
         return F.conv2d(
             x,
             self.kernel,
             stride=self.stride,
-            padding=1,
+            padding=padding,
             groups=x.size(1),
         )
 
 
 class SEBlock(nn.Module):
-    """
-    Squeeze-and-Excitation channel attention.
-    """
-
     def __init__(self, channels, reduction=8):
         super().__init__()
 
@@ -180,10 +164,6 @@ class SEBlock(nn.Module):
 
 
 class SpatialGate(nn.Module):
-    """
-    Lightweight spatial gate for late-stage feature refinement.
-    """
-
     def __init__(self, kernel_size=7):
         super().__init__()
 
@@ -202,23 +182,13 @@ class SpatialGate(nn.Module):
 
 
 class DualKernelInvertedResidual(nn.Module):
-    """
-    Inverted residual block with parallel 3x3 and 5x5 depthwise branches.
-    """
-
-    def __init__(
-        self,
-        in_channels,
-        out_channels,
-        expansion=2,
-        stride=1,
-        use_se=False,
-    ):
+    def __init__(self, in_channels, out_channels, expansion=2, stride=1, use_se=False):
         super().__init__()
 
         hidden_channels = in_channels * expansion
         branch_channels = hidden_channels // 2
         other_channels = hidden_channels - branch_channels
+
         self.use_residual = stride == 1 and in_channels == out_channels
 
         self.expand = nn.Sequential(
@@ -230,28 +200,14 @@ class DualKernelInvertedResidual(nn.Module):
         self.blur = BlurPool(hidden_channels) if stride == 2 else nn.Identity()
 
         self.dw3 = nn.Sequential(
-            nn.Conv2d(
-                branch_channels,
-                branch_channels,
-                kernel_size=3,
-                padding=1,
-                groups=branch_channels,
-                bias=False,
-            ),
+            nn.Conv2d(branch_channels, branch_channels, kernel_size=3, padding=1, groups=branch_channels, bias=False),
             nn.BatchNorm2d(branch_channels),
             nn.ReLU(inplace=True),
         )
 
         self.dw5 = nn.Sequential(
-            nn.Conv2d(
-                other_channels,
-                other_channels,
-                kernel_size=5,
-                padding=2,
-                groups=hidden_channels - branch_channels,
-                bias=False,
-            ),
-            nn.BatchNorm2d(hidden_channels - branch_channels),
+            nn.Conv2d(other_channels, other_channels, kernel_size=5, padding=2, groups=other_channels, bias=False),  # ✅ FIXED
+            nn.BatchNorm2d(other_channels),
             nn.ReLU(inplace=True),
         )
 
@@ -283,23 +239,11 @@ class DualKernelInvertedResidual(nn.Module):
 
 
 class EAGLENet(nn.Module):
-    """
-    EAGLE-Net v3:
-    Efficient Attention for Geo-spatial Land Estimation Network.
-
-    Uses:
-    - dual-kernel inverted residual blocks
-    - 3x3 and 5x5 depthwise branches
-    - SE attention only in mid/late blocks
-    - one late spatial gate
-    - anti-aliased downsampling with BlurPool
-    """
-
     def __init__(self, num_classes=10):
         super().__init__()
 
         self.stem = nn.Sequential(
-            nn.Conv2d(3, 32, kernel_size=3, padding = self.kernel.size(-1) // 2, bias=False),
+            nn.Conv2d(3, 32, kernel_size=3, padding=1, bias=False),  # ✅ FIXED
             nn.BatchNorm2d(32),
             nn.ReLU(inplace=True),
         )
@@ -339,10 +283,6 @@ class EAGLENet(nn.Module):
 
 
 def create_model(model_name="eagle_net", num_classes=10):
-    """
-    Model factory.
-    """
-
     if model_name == "baseline_cnn":
         return BaselineCNN(num_classes)
 
@@ -356,7 +296,4 @@ def create_model(model_name="eagle_net", num_classes=10):
 
 
 def count_parameters(model):
-    """
-    Count trainable parameters.
-    """
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
