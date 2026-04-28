@@ -8,7 +8,6 @@ import numpy as np
 import torch
 from sklearn.metrics import (
     accuracy_score,
-    classification_report,
     confusion_matrix,
     precision_recall_fscore_support,
 )
@@ -17,6 +16,7 @@ from torch.utils.data import DataLoader, Subset
 
 from src.models.architectures import create_model, count_parameters
 from src.utils.config import CONFIG
+from src.data.dataloader import get_dataloaders
 from src.data.eval_conditions import (
     get_eval_transform,
     add_gaussian_noise_tensor,
@@ -24,7 +24,13 @@ from src.data.eval_conditions import (
 )
 
 
-def get_condition_dataloader(condition):
+def get_test_indices():
+    """Extract SAME test indices used in training"""
+    _, _, test_loader, _ = get_dataloaders()
+    return test_loader.dataset.indices
+
+
+def build_condition_loader(condition, test_indices):
     data_cfg = CONFIG["data"]
 
     image_size = data_cfg["image_size"]
@@ -36,17 +42,22 @@ def get_condition_dataloader(condition):
 
     dataset = EuroSAT(root=root, download=True, transform=transform)
 
-    # HARD SUBSET FILTER
+    dataset = Subset(dataset, test_indices)
+
+    # HARD SUBSET FILTER (after applying test split)
     if condition == "hard_subset":
-        class_to_idx = dataset.class_to_idx
-        selected_indices = []
+        filtered_indices = []
 
-        for idx, label in enumerate(dataset.targets):
-            class_name = list(class_to_idx.keys())[list(class_to_idx.values()).index(label)]
+        class_names = dataset.dataset.classes
+
+        for i, idx in enumerate(dataset.indices):
+            label = dataset.dataset.targets[idx]
+            class_name = class_names[label]
+
             if class_name in HARD_CLASSES:
-                selected_indices.append(idx)
+                filtered_indices.append(i)
 
-        dataset = Subset(dataset, selected_indices)
+        dataset = Subset(dataset, filtered_indices)
 
     loader = DataLoader(
         dataset,
@@ -56,7 +67,7 @@ def get_condition_dataloader(condition):
         pin_memory=torch.cuda.is_available(),
     )
 
-    return loader, dataset
+    return loader
 
 
 def evaluate_condition(model, loader, condition, device):
@@ -90,7 +101,7 @@ def evaluate_condition(model, loader, condition, device):
 
     cm = confusion_matrix(all_labels, all_preds)
 
-    return acc, precision, recall, f1, cm, all_labels, all_preds
+    return acc, precision, recall, f1, cm
 
 
 def measure_latency(model, loader, device):
@@ -153,6 +164,8 @@ def evaluate():
 
     print(f"Loaded model from: {model_path}")
 
+    test_indices = get_test_indices()
+
     conditions = ["clean", "noisy", "low_light", "blurred", "hard_subset"]
 
     all_results = {}
@@ -160,9 +173,9 @@ def evaluate():
     for condition in conditions:
         print(f"\n=== Evaluating on: {condition} ===")
 
-        loader, dataset = get_condition_dataloader(condition)
+        loader = build_condition_loader(condition, test_indices)
 
-        acc, precision, recall, f1, cm, y_true, y_pred = evaluate_condition(
+        acc, precision, recall, f1, cm = evaluate_condition(
             model, loader, condition, device
         )
 
