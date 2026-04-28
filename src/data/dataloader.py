@@ -5,13 +5,23 @@ from torch.utils.data import DataLoader, random_split
 from torchvision import transforms
 from torchvision.datasets import EuroSAT
 
+from src.data.robust_transforms import get_robust_train_transform
 from src.utils.config import CONFIG
 
 
 def get_transforms():
-    image_size = CONFIG["data"]["image_size"]
+    """
+    Build train/evaluation transforms.
 
-    train_transform = transforms.Compose([
+    Standard training is used for baseline/lightweight models.
+    Robust training is used when enabled in config, mainly for EAGLE-Net.
+    """
+
+    image_size = CONFIG["data"]["image_size"]
+    model_name = CONFIG["model"]["name"]
+    robust_training = CONFIG["training"].get("robust_training", False)
+
+    standard_train_transform = transforms.Compose([
         transforms.Resize((image_size, image_size)),
         transforms.RandomHorizontalFlip(),
         transforms.RandomVerticalFlip(),
@@ -19,15 +29,26 @@ def get_transforms():
         transforms.ToTensor(),
     ])
 
+    robust_train_transform = get_robust_train_transform(image_size)
+
     eval_transform = transforms.Compose([
         transforms.Resize((image_size, image_size)),
         transforms.ToTensor(),
     ])
 
+    if robust_training and model_name == "eagle_net":
+        train_transform = robust_train_transform
+    else:
+        train_transform = standard_train_transform
+
     return train_transform, eval_transform
 
 
 def get_dataloaders():
+    """
+    Create reproducible EuroSAT train/validation/test dataloaders.
+    """
+
     data_cfg = CONFIG["data"]
 
     batch_size = data_cfg["batch_size"]
@@ -62,11 +83,13 @@ def get_dataloaders():
         download=False,
         transform=train_transform,
     )
+
     val_dataset = EuroSAT(
         root=root,
         download=False,
         transform=eval_transform,
     )
+
     test_dataset = EuroSAT(
         root=root,
         download=False,

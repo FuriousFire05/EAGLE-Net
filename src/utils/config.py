@@ -1,13 +1,12 @@
 # src/utils/config.py
 
 CONFIG = {
-
     # ========================
     # MODEL SETTINGS
     # ========================
     "model": {
-        "name": "eagle_net",   # change to: baseline_cnn / lightweight_cnn / eagle_net
-        "num_classes": 10
+        "name": "eagle_net",   # baseline_cnn / lightweight_cnn / eagle_net
+        "num_classes": 10,
     },
 
     # ========================
@@ -24,7 +23,7 @@ CONFIG = {
         "val_split": 0.15,
         "test_split": 0.15,
 
-        "seed": 42
+        "seed": 42,
     },
 
     # ========================
@@ -35,9 +34,11 @@ CONFIG = {
         "learning_rate": 0.001,
         "weight_decay": 1e-4,
 
-        # scheduler
         "scheduler_step_size": 5,
-        "scheduler_gamma": 0.5
+        "scheduler_gamma": 0.5,
+
+        # Robust training is intended mainly for eagle_net.
+        "robust_training": True,
     },
 
     # ========================
@@ -46,6 +47,6 @@ CONFIG = {
     "paths": {
         "model_dir": "artifacts/models",
         "results_dir": "artifacts/results",
-        "plots_dir": "artifacts/plots"
-    }
+        "plots_dir": "artifacts/plots",
+    },
 }
