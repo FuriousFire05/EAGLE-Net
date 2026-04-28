@@ -2,6 +2,7 @@
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class BaselineCNN(nn.Module):
@@ -130,135 +131,171 @@ class LightweightCNN(nn.Module):
         return self.classifier(x)
 
 
-class ECABlock(nn.Module):
+class BlurPool(nn.Module):
     """
-    Efficient Channel Attention.
-
-    Unlike SE attention, ECA avoids dimensionality reduction.
-    It uses a lightweight 1D convolution over channel descriptors.
+    Anti-aliased downsampling with a fixed binomial blur kernel.
     """
 
-    def __init__(self, channels, kernel_size=3):
+    def __init__(self, channels, stride=2):
         super().__init__()
+        self.stride = stride
 
-        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        kernel = torch.tensor([1.0, 2.0, 1.0])
+        kernel = kernel[:, None] * kernel[None, :]
+        kernel = kernel / kernel.sum()
+        kernel = kernel[None, None, :, :].repeat(channels, 1, 1, 1)
 
-        self.conv = nn.Conv1d(
-            in_channels=1,
-            out_channels=1,
-            kernel_size=kernel_size,
-            padding=(kernel_size - 1) // 2,
-            bias=False,
-        )
-
-        self.sigmoid = nn.Sigmoid()
+        self.register_buffer("kernel", kernel)
 
     def forward(self, x):
-        # x: [B, C, H, W]
-        y = self.avg_pool(x)                  # [B, C, 1, 1]
-        y = y.squeeze(-1).transpose(-1, -2)   # [B, 1, C]
-        y = self.conv(y)                      # [B, 1, C]
-        y = y.transpose(-1, -2).unsqueeze(-1) # [B, C, 1, 1]
-        y = self.sigmoid(y)
+        padding = self.kernel.size(-1) // 2
 
-        return x * y
+        return F.conv2d(
+            x,
+            self.kernel,
+            stride=self.stride,
+            padding=padding,
+            groups=x.size(1),
+        )
 
 
-class CoordinateAttention(nn.Module):
+class SEBlock(nn.Module):
     """
-    Coordinate Attention.
-
-    Captures long-range positional information separately along
-    height and width, making it useful for spatial structures such
-    as roads, rivers, crop layouts, and residential patterns.
+    Squeeze-and-Excitation channel attention.
     """
 
-    def __init__(self, channels, reduction=16):
+    def __init__(self, channels, reduction=8):
         super().__init__()
 
         reduced_channels = max(8, channels // reduction)
 
-        self.pool_h = nn.AdaptiveAvgPool2d((None, 1))
-        self.pool_w = nn.AdaptiveAvgPool2d((1, None))
+        self.block = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(channels, reduced_channels, kernel_size=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(reduced_channels, channels, kernel_size=1),
+            nn.Sigmoid(),
+        )
 
-        self.shared = nn.Sequential(
-            nn.Conv2d(channels, reduced_channels, kernel_size=1, bias=False),
-            nn.BatchNorm2d(reduced_channels),
+    def forward(self, x):
+        return x * self.block(x)
+
+
+class SpatialGate(nn.Module):
+    """
+    Lightweight spatial gate for late-stage feature refinement.
+    """
+
+    def __init__(self, kernel_size=7):
+        super().__init__()
+
+        padding = kernel_size // 2
+        self.gate = nn.Sequential(
+            nn.Conv2d(2, 1, kernel_size=kernel_size, padding=padding, bias=False),
+            nn.BatchNorm2d(1),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, x):
+        avg_map = torch.mean(x, dim=1, keepdim=True)
+        max_map, _ = torch.max(x, dim=1, keepdim=True)
+        gate = self.gate(torch.cat([avg_map, max_map], dim=1))
+        return x * gate
+
+
+class DualKernelInvertedResidual(nn.Module):
+    """
+    Inverted residual block with parallel 3x3 and 5x5 depthwise branches.
+    """
+
+    def __init__(
+        self,
+        in_channels,
+        out_channels,
+        expansion=2,
+        stride=1,
+        use_se=False,
+    ):
+        super().__init__()
+
+        hidden_channels = in_channels * expansion
+        branch_channels = hidden_channels // 2
+        other_channels = hidden_channels - branch_channels
+
+        self.use_residual = stride == 1 and in_channels == out_channels
+
+        self.expand = nn.Sequential(
+            nn.Conv2d(in_channels, hidden_channels, kernel_size=1, bias=False),
+            nn.BatchNorm2d(hidden_channels),
             nn.ReLU(inplace=True),
         )
 
-        self.attn_h = nn.Conv2d(
-            reduced_channels,
-            channels,
-            kernel_size=1,
-            bias=False,
+        self.blur = BlurPool(hidden_channels) if stride == 2 else nn.Identity()
+
+        self.dw3 = nn.Sequential(
+            nn.Conv2d(
+                branch_channels,
+                branch_channels,
+                kernel_size=3,
+                padding=1,
+                groups=branch_channels,
+                bias=False,
+            ),
+            nn.BatchNorm2d(branch_channels),
+            nn.ReLU(inplace=True),
         )
 
-        self.attn_w = nn.Conv2d(
-            reduced_channels,
-            channels,
-            kernel_size=1,
-            bias=False,
+        self.dw5 = nn.Sequential(
+            nn.Conv2d(
+                other_channels,
+                other_channels,
+                kernel_size=5,
+                padding=2,
+                groups=other_channels,
+                bias=False,
+            ),
+            nn.BatchNorm2d(other_channels),
+            nn.ReLU(inplace=True),
         )
 
-        self.sigmoid = nn.Sigmoid()
+        self.se = SEBlock(hidden_channels) if use_se else nn.Identity()
+
+        self.project = nn.Sequential(
+            nn.Conv2d(hidden_channels, out_channels, kernel_size=1, bias=False),
+            nn.BatchNorm2d(out_channels),
+        )
 
     def forward(self, x):
         identity = x
 
-        b, c, h, w = x.size()
+        x = self.expand(x)
+        x = self.blur(x)
 
-        x_h = self.pool_h(x)                  # [B, C, H, 1]
-        x_w = self.pool_w(x).permute(0, 1, 3, 2)  # [B, C, W, 1]
+        c_half = x.size(1) // 2
+        x3 = x[:, :c_half, :, :]
+        x5 = x[:, c_half:, :, :]
 
-        y = torch.cat([x_h, x_w], dim=2)      # [B, C, H+W, 1]
-        y = self.shared(y)
+        x = torch.cat([self.dw3(x3), self.dw5(x5)], dim=1)
+        x = self.se(x)
+        x = self.project(x)
 
-        y_h, y_w = torch.split(y, [h, w], dim=2)
-        y_w = y_w.permute(0, 1, 3, 2)
+        if self.use_residual:
+            x = x + identity
 
-        attn_h = self.sigmoid(self.attn_h(y_h))
-        attn_w = self.sigmoid(self.attn_w(y_w))
-
-        return identity * attn_h * attn_w
-
-
-class EAGLEBlock(nn.Module):
-    """
-    EAGLE Block:
-    Depthwise separable convolution + ECA + Coordinate Attention.
-
-    This is the real attention-enhanced building block.
-    """
-
-    def __init__(self, in_channels, out_channels, use_coord=True):
-        super().__init__()
-
-        self.conv = DepthwiseSeparableConv(in_channels, out_channels)
-        self.eca = ECABlock(out_channels)
-
-        self.coord = (
-            CoordinateAttention(out_channels)
-            if use_coord
-            else nn.Identity()
-        )
-
-    def forward(self, x):
-        x = self.conv(x)
-        x = self.eca(x)
-        x = self.coord(x)
         return x
 
 
 class EAGLENet(nn.Module):
     """
-    EAGLE-Net v2:
+    EAGLE-Net v3:
     Efficient Attention for Geo-spatial Land Estimation Network.
 
     Uses:
-    - depthwise separable convolutions for efficiency
-    - ECA for lightweight channel attention
-    - Coordinate Attention for spatial/positional awareness
+    - dual-kernel inverted residual blocks
+    - 3x3 and 5x5 depthwise branches
+    - SE attention only in mid/late blocks
+    - one late spatial gate
+    - anti-aliased downsampling with BlurPool
     """
 
     def __init__(self, num_classes=10):
@@ -270,30 +307,32 @@ class EAGLENet(nn.Module):
             nn.ReLU(inplace=True),
         )
 
-        self.block1 = nn.Sequential(
-            EAGLEBlock(32, 64, use_coord=False),
-            nn.MaxPool2d(2),
+        self.stage1 = nn.Sequential(
+            DualKernelInvertedResidual(32, 48, expansion=2, stride=1, use_se=False),
+            DualKernelInvertedResidual(48, 64, expansion=2, stride=2, use_se=False),
         )
 
-        self.block2 = nn.Sequential(
-            EAGLEBlock(64, 128, use_coord=True),
-            nn.MaxPool2d(2),
+        self.stage2 = nn.Sequential(
+            DualKernelInvertedResidual(64, 96, expansion=3, stride=1, use_se=True),
+            DualKernelInvertedResidual(96, 128, expansion=3, stride=2, use_se=True),
         )
 
-        self.block3 = nn.Sequential(
-            EAGLEBlock(128, 256, use_coord=True),
-            nn.MaxPool2d(2),
+        self.stage3 = nn.Sequential(
+            DualKernelInvertedResidual(128, 160, expansion=3, stride=1, use_se=True),
+            DualKernelInvertedResidual(160, 256, expansion=3, stride=2, use_se=True),
         )
 
+        self.spatial_gate = SpatialGate()
         self.pool = nn.AdaptiveAvgPool2d(1)
         self.dropout = nn.Dropout(p=0.25)
         self.classifier = nn.Linear(256, num_classes)
 
     def forward(self, x):
         x = self.stem(x)
-        x = self.block1(x)
-        x = self.block2(x)
-        x = self.block3(x)
+        x = self.stage1(x)
+        x = self.stage2(x)
+        x = self.stage3(x)
+        x = self.spatial_gate(x)
 
         x = self.pool(x)
         x = torch.flatten(x, 1)
@@ -313,7 +352,7 @@ def create_model(model_name="eagle_net", num_classes=10):
     if model_name == "lightweight_cnn":
         return LightweightCNN(num_classes)
 
-    if model_name in ["eagle_net", "eager_net"]:
+    if model_name == "eagle_net":
         return EAGLENet(num_classes)
 
     raise ValueError(f"Unknown model name: {model_name}")
