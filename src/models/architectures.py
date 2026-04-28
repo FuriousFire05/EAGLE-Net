@@ -1,306 +1,326 @@
-"""Model architectures for EAGLE-Net project."""
+# src/models/architectures.py
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 
 class BaselineCNN(nn.Module):
     """
-    Baseline CNN for EuroSAT classification.
-    Standard convolutional blocks with batch normalization.
+    Standard CNN baseline for EuroSAT classification.
+    Used as the accuracy-focused reference model.
     """
-    
+
     def __init__(self, num_classes=10):
-        super(BaselineCNN, self).__init__()
-        
-        # Conv Block 1: 3 -> 32 channels
-        self.conv1 = nn.Sequential(
+        super().__init__()
+
+        self.features = nn.Sequential(
             nn.Conv2d(3, 32, kernel_size=3, padding=1),
             nn.BatchNorm2d(32),
             nn.ReLU(inplace=True),
             nn.Conv2d(32, 32, kernel_size=3, padding=1),
             nn.BatchNorm2d(32),
             nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2, stride=2),  # 64 -> 32
-        )
-        
-        # Conv Block 2: 32 -> 64 channels
-        self.conv2 = nn.Sequential(
+            nn.MaxPool2d(2),
+
             nn.Conv2d(32, 64, kernel_size=3, padding=1),
             nn.BatchNorm2d(64),
             nn.ReLU(inplace=True),
             nn.Conv2d(64, 64, kernel_size=3, padding=1),
             nn.BatchNorm2d(64),
             nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2, stride=2),  # 32 -> 16
-        )
-        
-        # Conv Block 3: 64 -> 128 channels
-        self.conv3 = nn.Sequential(
+            nn.MaxPool2d(2),
+
             nn.Conv2d(64, 128, kernel_size=3, padding=1),
             nn.BatchNorm2d(128),
             nn.ReLU(inplace=True),
             nn.Conv2d(128, 128, kernel_size=3, padding=1),
             nn.BatchNorm2d(128),
             nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2, stride=2),  # 16 -> 8
-        )
-        
-        # Conv Block 4: 128 -> 256 channels
-        self.conv4 = nn.Sequential(
+            nn.MaxPool2d(2),
+
             nn.Conv2d(128, 256, kernel_size=3, padding=1),
             nn.BatchNorm2d(256),
             nn.ReLU(inplace=True),
             nn.Conv2d(256, 256, kernel_size=3, padding=1),
             nn.BatchNorm2d(256),
             nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2, stride=2),  # 8 -> 4
+            nn.MaxPool2d(2),
         )
-        
-        # Classifier
-        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = nn.Linear(256, num_classes)
-    
+
+        self.pool = nn.AdaptiveAvgPool2d(1)
+        self.classifier = nn.Linear(256, num_classes)
+
     def forward(self, x):
-        x = self.conv1(x)
-        x = self.conv2(x)
-        x = self.conv3(x)
-        x = self.conv4(x)
-        x = self.avgpool(x)
-        x = x.view(x.size(0), -1)
-        x = self.fc(x)
-        return x
+        x = self.features(x)
+        x = self.pool(x)
+        x = torch.flatten(x, 1)
+        return self.classifier(x)
 
 
 class DepthwiseSeparableConv(nn.Module):
     """
-    Depthwise Separable Convolution block.
-    Reduces parameters: standard conv -> depthwise + pointwise.
+    Depthwise separable convolution:
+    depthwise spatial filtering + pointwise channel mixing.
     """
-    
-    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1):
-        super(DepthwiseSeparableConv, self).__init__()
-        
-        # Depthwise: apply conv separately to each input channel
-        self.depthwise = nn.Conv2d(
-            in_channels, in_channels,
-            kernel_size=kernel_size, stride=stride, padding=padding,
-            groups=in_channels
+
+    def __init__(self, in_channels, out_channels, stride=1):
+        super().__init__()
+
+        self.block = nn.Sequential(
+            nn.Conv2d(
+                in_channels,
+                in_channels,
+                kernel_size=3,
+                stride=stride,
+                padding=1,
+                groups=in_channels,
+                bias=False,
+            ),
+            nn.BatchNorm2d(in_channels),
+            nn.ReLU(inplace=True),
+
+            nn.Conv2d(
+                in_channels,
+                out_channels,
+                kernel_size=1,
+                bias=False,
+            ),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
         )
-        
-        # Pointwise: 1x1 conv to change channels
-        self.pointwise = nn.Conv2d(in_channels, out_channels, kernel_size=1)
-        
-        self.bn1 = nn.BatchNorm2d(in_channels)
-        self.bn2 = nn.BatchNorm2d(out_channels)
-        self.relu = nn.ReLU(inplace=True)
-    
+
     def forward(self, x):
-        x = self.depthwise(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        x = self.pointwise(x)
-        x = self.bn2(x)
-        x = self.relu(x)
-        return x
+        return self.block(x)
 
 
 class LightweightCNN(nn.Module):
     """
     Lightweight CNN using depthwise separable convolutions.
-    Significantly fewer parameters than BaselineCNN.
+    This is the deployment-efficiency reference model.
     """
-    
+
     def __init__(self, num_classes=10):
-        super(LightweightCNN, self).__init__()
-        
-        # Initial conv (standard, small kernel)
-        self.conv0 = nn.Sequential(
-            nn.Conv2d(3, 32, kernel_size=3, padding=1),
+        super().__init__()
+
+        self.stem = nn.Sequential(
+            nn.Conv2d(3, 32, kernel_size=3, padding=1, bias=False),
             nn.BatchNorm2d(32),
             nn.ReLU(inplace=True),
         )
-        
-        # Block 1: 32 -> 64 (depthwise separable)
-        self.block1 = nn.Sequential(
-            DepthwiseSeparableConv(32, 64, kernel_size=3, stride=1, padding=1),
-            nn.MaxPool2d(kernel_size=2, stride=2),  # 64 -> 32
+
+        self.features = nn.Sequential(
+            DepthwiseSeparableConv(32, 64),
+            nn.MaxPool2d(2),
+
+            DepthwiseSeparableConv(64, 128),
+            nn.MaxPool2d(2),
+
+            DepthwiseSeparableConv(128, 256),
+            nn.MaxPool2d(2),
         )
-        
-        # Block 2: 64 -> 128
-        self.block2 = nn.Sequential(
-            DepthwiseSeparableConv(64, 128, kernel_size=3, stride=1, padding=1),
-            nn.MaxPool2d(kernel_size=2, stride=2),  # 32 -> 16
-        )
-        
-        # Block 3: 128 -> 256
-        self.block3 = nn.Sequential(
-            DepthwiseSeparableConv(128, 256, kernel_size=3, stride=1, padding=1),
-            nn.MaxPool2d(kernel_size=2, stride=2),  # 16 -> 8
-        )
-        
-        # Classifier
-        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = nn.Linear(256, num_classes)
-    
+
+        self.pool = nn.AdaptiveAvgPool2d(1)
+        self.classifier = nn.Linear(256, num_classes)
+
     def forward(self, x):
-        x = self.conv0(x)
-        x = self.block1(x)
-        x = self.block2(x)
-        x = self.block3(x)
-        x = self.avgpool(x)
-        x = x.view(x.size(0), -1)
-        x = self.fc(x)
-        return x
+        x = self.stem(x)
+        x = self.features(x)
+        x = self.pool(x)
+        x = torch.flatten(x, 1)
+        return self.classifier(x)
 
 
-class ChannelAttention(nn.Module):
+class ECABlock(nn.Module):
     """
-    Channel Attention Block (SE-Net style).
-    Learns to weight channels adaptively.
+    Efficient Channel Attention.
+
+    Unlike SE attention, ECA avoids dimensionality reduction.
+    It uses a lightweight 1D convolution over channel descriptors.
     """
-    
-    def __init__(self, channels, reduction=16):
-        super(ChannelAttention, self).__init__()
+
+    def __init__(self, channels, kernel_size=3):
+        super().__init__()
+
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
-        self.max_pool = nn.AdaptiveMaxPool2d(1)
-        
-        # Shared FC layers
-        self.fc = nn.Sequential(
-            nn.Conv2d(channels, channels // reduction, kernel_size=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(channels // reduction, channels, kernel_size=1),
+
+        self.conv = nn.Conv1d(
+            in_channels=1,
+            out_channels=1,
+            kernel_size=kernel_size,
+            padding=(kernel_size - 1) // 2,
+            bias=False,
         )
+
         self.sigmoid = nn.Sigmoid()
-    
+
     def forward(self, x):
-        # Compute channel attention
-        avg_out = self.fc(self.avg_pool(x))
-        max_out = self.fc(self.max_pool(x))
-        out = avg_out + max_out
-        out = self.sigmoid(out)
-        
-        # Apply to input
-        return x * out
+        # x: [B, C, H, W]
+        y = self.avg_pool(x)                  # [B, C, 1, 1]
+        y = y.squeeze(-1).transpose(-1, -2)   # [B, 1, C]
+        y = self.conv(y)                      # [B, 1, C]
+        y = y.transpose(-1, -2).unsqueeze(-1) # [B, C, 1, 1]
+        y = self.sigmoid(y)
+
+        return x * y
 
 
-class SpatialAttention(nn.Module):
+class CoordinateAttention(nn.Module):
     """
-    Spatial Attention Block.
-    Learns spatial distribution of important regions.
+    Coordinate Attention.
+
+    Captures long-range positional information separately along
+    height and width, making it useful for spatial structures such
+    as roads, rivers, crop layouts, and residential patterns.
     """
-    
-    def __init__(self, kernel_size=7):
-        super(SpatialAttention, self).__init__()
-        padding = kernel_size // 2
-        self.conv = nn.Conv2d(2, 1, kernel_size=kernel_size, padding=padding)
+
+    def __init__(self, channels, reduction=16):
+        super().__init__()
+
+        reduced_channels = max(8, channels // reduction)
+
+        self.pool_h = nn.AdaptiveAvgPool2d((None, 1))
+        self.pool_w = nn.AdaptiveAvgPool2d((1, None))
+
+        self.shared = nn.Sequential(
+            nn.Conv2d(channels, reduced_channels, kernel_size=1, bias=False),
+            nn.BatchNorm2d(reduced_channels),
+            nn.ReLU(inplace=True),
+        )
+
+        self.attn_h = nn.Conv2d(
+            reduced_channels,
+            channels,
+            kernel_size=1,
+            bias=False,
+        )
+
+        self.attn_w = nn.Conv2d(
+            reduced_channels,
+            channels,
+            kernel_size=1,
+            bias=False,
+        )
+
         self.sigmoid = nn.Sigmoid()
-    
+
     def forward(self, x):
-        # Compute spatial attention
-        avg_out = torch.mean(x, dim=1, keepdim=True)
-        max_out, _ = torch.max(x, dim=1, keepdim=True)
-        x_cat = torch.cat([avg_out, max_out], dim=1)
-        out = self.conv(x_cat)
-        out = self.sigmoid(out)
-        
-        # Apply to input
-        return x * out
+        identity = x
+
+        b, c, h, w = x.size()
+
+        x_h = self.pool_h(x)                  # [B, C, H, 1]
+        x_w = self.pool_w(x).permute(0, 1, 3, 2)  # [B, C, W, 1]
+
+        y = torch.cat([x_h, x_w], dim=2)      # [B, C, H+W, 1]
+        y = self.shared(y)
+
+        y_h, y_w = torch.split(y, [h, w], dim=2)
+        y_w = y_w.permute(0, 1, 3, 2)
+
+        attn_h = self.sigmoid(self.attn_h(y_h))
+        attn_w = self.sigmoid(self.attn_w(y_w))
+
+        return identity * attn_h * attn_w
+
+
+class EAGLEBlock(nn.Module):
+    """
+    EAGLE Block:
+    Depthwise separable convolution + ECA + Coordinate Attention.
+
+    This is the real attention-enhanced building block.
+    """
+
+    def __init__(self, in_channels, out_channels, use_coord=True):
+        super().__init__()
+
+        self.conv = DepthwiseSeparableConv(in_channels, out_channels)
+        self.eca = ECABlock(out_channels)
+
+        self.coord = (
+            CoordinateAttention(out_channels)
+            if use_coord
+            else nn.Identity()
+        )
+
+    def forward(self, x):
+        x = self.conv(x)
+        x = self.eca(x)
+        x = self.coord(x)
+        return x
 
 
 class EAGLENet(nn.Module):
     """
-    EAGLE-Net: Efficient Attention for Geo-spatial Land Estimation Network.
-    
-    Combines:
-    - LightweightCNN backbone (depthwise separable convolutions)
-    - Channel Attention (SE-Net style)
-    - Spatial Attention (adaptive spatial weighting)
+    EAGLE-Net v2:
+    Efficient Attention for Geo-spatial Land Estimation Network.
+
+    Uses:
+    - depthwise separable convolutions for efficiency
+    - ECA for lightweight channel attention
+    - Coordinate Attention for spatial/positional awareness
     """
-    
+
     def __init__(self, num_classes=10):
-        super(EAGLENet, self).__init__()
-        
-        # Initial conv
-        self.conv0 = nn.Sequential(
-            nn.Conv2d(3, 32, kernel_size=3, padding=1),
+        super().__init__()
+
+        self.stem = nn.Sequential(
+            nn.Conv2d(3, 32, kernel_size=3, padding=1, bias=False),
             nn.BatchNorm2d(32),
             nn.ReLU(inplace=True),
         )
-        
-        # Block 1: 32 -> 64 with attention
-        self.block1_conv = nn.Sequential(
-            DepthwiseSeparableConv(32, 64, kernel_size=3, stride=1, padding=1),
+
+        self.block1 = nn.Sequential(
+            EAGLEBlock(32, 64, use_coord=False),
+            nn.MaxPool2d(2),
         )
-        self.block1_channel_attn = ChannelAttention(64, reduction=4)
-        self.block1_spatial_attn = SpatialAttention(kernel_size=7)
-        self.block1_pool = nn.MaxPool2d(kernel_size=2, stride=2)  # 64 -> 32
-        
-        # Block 2: 64 -> 128 with attention
-        self.block2_conv = nn.Sequential(
-            DepthwiseSeparableConv(64, 128, kernel_size=3, stride=1, padding=1),
+
+        self.block2 = nn.Sequential(
+            EAGLEBlock(64, 128, use_coord=True),
+            nn.MaxPool2d(2),
         )
-        self.block2_channel_attn = ChannelAttention(128, reduction=8)
-        self.block2_spatial_attn = SpatialAttention(kernel_size=7)
-        self.block2_pool = nn.MaxPool2d(kernel_size=2, stride=2)  # 32 -> 16
-        
-        # Block 3: 128 -> 256 with attention
-        self.block3_conv = nn.Sequential(
-            DepthwiseSeparableConv(128, 256, kernel_size=3, stride=1, padding=1),
+
+        self.block3 = nn.Sequential(
+            EAGLEBlock(128, 256, use_coord=True),
+            nn.MaxPool2d(2),
         )
-        self.block3_channel_attn = ChannelAttention(256, reduction=16)
-        self.block3_spatial_attn = SpatialAttention(kernel_size=7)
-        self.block3_pool = nn.MaxPool2d(kernel_size=2, stride=2)  # 16 -> 8
-        
-        # Classifier
-        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = nn.Linear(256, num_classes)
-    
+
+        self.pool = nn.AdaptiveAvgPool2d(1)
+        self.dropout = nn.Dropout(p=0.25)
+        self.classifier = nn.Linear(256, num_classes)
+
     def forward(self, x):
-        x = self.conv0(x)
-        
-        # Block 1
-        x = self.block1_conv(x)
-        x = self.block1_channel_attn(x)
-        x = self.block1_spatial_attn(x)
-        x = self.block1_pool(x)
-        
-        # Block 2
-        x = self.block2_conv(x)
-        x = self.block2_channel_attn(x)
-        x = self.block2_spatial_attn(x)
-        x = self.block2_pool(x)
-        
-        # Block 3
-        x = self.block3_conv(x)
-        x = self.block3_channel_attn(x)
-        x = self.block3_spatial_attn(x)
-        x = self.block3_pool(x)
-        
-        # Classifier
-        x = self.avgpool(x)
-        x = x.view(x.size(0), -1)
-        x = self.fc(x)
-        
-        return x
+        x = self.stem(x)
+        x = self.block1(x)
+        x = self.block2(x)
+        x = self.block3(x)
+
+        x = self.pool(x)
+        x = torch.flatten(x, 1)
+        x = self.dropout(x)
+
+        return self.classifier(x)
 
 
 def create_model(model_name="eagle_net", num_classes=10):
+    """
+    Model factory.
+    """
+
     if model_name == "baseline_cnn":
         return BaselineCNN(num_classes)
-    
-    elif model_name == "lightweight_cnn":
+
+    if model_name == "lightweight_cnn":
         return LightweightCNN(num_classes)
-    
-    # support both temporarily (backward compatibility)
-    elif model_name in ["eagle_net", "eager_net"]:
+
+    if model_name in ["eagle_net", "eager_net"]:
         return EAGLENet(num_classes)
-    
-    else:
-        raise ValueError(f"Unknown model: {model_name}")
+
+    raise ValueError(f"Unknown model name: {model_name}")
 
 
 def count_parameters(model):
-    """Count total trainable parameters."""
+    """
+    Count trainable parameters.
+    """
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
