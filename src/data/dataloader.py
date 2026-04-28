@@ -36,7 +36,7 @@ def get_transforms():
         transforms.ToTensor(),
     ])
 
-    if robust_training and model_name == "eagle_net":
+    if robust_training:
         train_transform = robust_train_transform
     else:
         train_transform = standard_train_transform
