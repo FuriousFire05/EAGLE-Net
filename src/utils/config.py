@@ -6,7 +6,7 @@ CONFIG = {
     # MODEL SETTINGS
     # ========================
     "model": {
-        "name": "lightweight_cnn",   # change to: baseline_cnn / lightweight_cnn / eagle_net
+        "name": "eagle_net",   # change to: baseline_cnn / lightweight_cnn / eagle_net
         "num_classes": 10
     },
 
