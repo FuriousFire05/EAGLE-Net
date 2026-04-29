@@ -11,26 +11,36 @@ from sklearn.metrics import (
     confusion_matrix,
     precision_recall_fscore_support,
 )
-from torchvision.datasets import EuroSAT
 from torch.utils.data import DataLoader, Subset
+from torchvision.datasets import EuroSAT
 
-from src.models.architectures import create_model, count_parameters
-from src.utils.config import CONFIG
 from src.data.dataloader import get_dataloaders
 from src.data.eval_conditions import (
-    get_eval_transform,
-    add_gaussian_noise_tensor,
     HARD_CLASSES,
+    add_gaussian_noise_tensor,
+    get_eval_transform,
 )
+from src.data.eval_transforms import get_unseen_eval_transforms
+from src.models.architectures import count_parameters, create_model
+from src.utils.config import CONFIG
 
 
 def get_test_indices():
-    """Extract SAME test indices used in training"""
+    """
+    Extract the exact same test indices used by the main dataloader.
+    """
     _, _, test_loader, _ = get_dataloaders()
     return test_loader.dataset.indices
 
 
-def build_condition_loader(condition, test_indices):
+def get_hard_class_indices(class_names):
+    """
+    Convert hard class names into class indices.
+    """
+    return [class_names.index(name) for name in HARD_CLASSES if name in class_names]
+
+
+def build_condition_loader(condition, test_indices, unseen_transforms):
     data_cfg = CONFIG["data"]
 
     image_size = data_cfg["image_size"]
@@ -38,26 +48,30 @@ def build_condition_loader(condition, test_indices):
     num_workers = data_cfg["num_workers"]
     root = data_cfg["root"]
 
-    transform = get_eval_transform(condition, image_size)
+    if condition in unseen_transforms:
+        transform = unseen_transforms[condition]
+    else:
+        transform = get_eval_transform(condition, image_size)
 
     dataset = EuroSAT(root=root, download=True, transform=transform)
+    class_names = dataset.classes
 
     dataset = Subset(dataset, test_indices)
 
-    # HARD SUBSET FILTER (after applying test split)
+    metric_labels = None
+
     if condition == "hard_subset":
+        hard_label_indices = get_hard_class_indices(class_names)
         filtered_indices = []
 
-        class_names = dataset.dataset.classes
+        for subset_position, original_idx in enumerate(dataset.indices):
+            label = dataset.dataset.targets[original_idx]
 
-        for i, idx in enumerate(dataset.indices):
-            label = dataset.dataset.targets[idx]
-            class_name = class_names[label]
-
-            if class_name in HARD_CLASSES:
-                filtered_indices.append(i)
+            if label in hard_label_indices:
+                filtered_indices.append(subset_position)
 
         dataset = Subset(dataset, filtered_indices)
+        metric_labels = hard_label_indices
 
     loader = DataLoader(
         dataset,
@@ -67,10 +81,10 @@ def build_condition_loader(condition, test_indices):
         pin_memory=torch.cuda.is_available(),
     )
 
-    return loader
+    return loader, class_names, metric_labels
 
 
-def evaluate_condition(model, loader, condition, device):
+def evaluate_condition(model, loader, condition, device, metric_labels=None):
     all_preds = []
     all_labels = []
 
@@ -78,7 +92,6 @@ def evaluate_condition(model, loader, condition, device):
 
     with torch.no_grad():
         for images, labels in loader:
-
             images = images.to(device)
 
             if condition == "noisy":
@@ -93,29 +106,43 @@ def evaluate_condition(model, loader, condition, device):
     all_preds = np.array(all_preds)
     all_labels = np.array(all_labels)
 
-    acc = accuracy_score(all_labels, all_preds)
+    accuracy = accuracy_score(all_labels, all_preds)
 
     precision, recall, f1, _ = precision_recall_fscore_support(
-        all_labels, all_preds, average="macro", zero_division=0
+        all_labels,
+        all_preds,
+        labels=metric_labels,
+        average="macro",
+        zero_division=0,
     )
 
-    cm = confusion_matrix(all_labels, all_preds)
+    cm = confusion_matrix(
+        all_labels,
+        all_preds,
+        labels=list(range(CONFIG["model"]["num_classes"])),
+    )
 
-    return acc, precision, recall, f1, cm
+    return accuracy, precision, recall, f1, cm
 
 
-def measure_latency(model, loader, device):
+def measure_latency(model, loader, condition, device):
     samples = []
 
     for images, _ in loader:
+        if condition == "noisy":
+            images = add_gaussian_noise_tensor(images)
+
         for i in range(images.size(0)):
             samples.append(images[i].unsqueeze(0))
             if len(samples) >= 100:
                 break
+
         if len(samples) >= 100:
             break
 
-    # warmup
+    if not samples:
+        return 0.0, 0.0
+
     with torch.no_grad():
         for sample in samples[:10]:
             sample = sample.to(device)
@@ -164,32 +191,57 @@ def evaluate():
 
     print(f"Loaded model from: {model_path}")
 
+    image_size = CONFIG["data"]["image_size"]
     test_indices = get_test_indices()
+    unseen_transforms = get_unseen_eval_transforms(image_size)
 
-    conditions = ["clean", "noisy", "low_light", "blurred", "hard_subset"]
+    conditions = [
+        "clean",
+        "noisy",
+        "low_light",
+        "blurred",
+        "hard_subset",
+        "jpeg",
+        "color_shift",
+        "strong_noise",
+        "downscale",
+    ]
 
     all_results = {}
 
     for condition in conditions:
         print(f"\n=== Evaluating on: {condition} ===")
 
-        loader = build_condition_loader(condition, test_indices)
-
-        acc, precision, recall, f1, cm = evaluate_condition(
-            model, loader, condition, device
+        loader, class_names, metric_labels = build_condition_loader(
+            condition=condition,
+            test_indices=test_indices,
+            unseen_transforms=unseen_transforms,
         )
 
-        avg_time, median_time = measure_latency(model, loader, device)
+        accuracy, precision, recall, f1, cm = evaluate_condition(
+            model=model,
+            loader=loader,
+            condition=condition,
+            device=device,
+            metric_labels=metric_labels,
+        )
+
+        avg_time, median_time = measure_latency(
+            model=model,
+            loader=loader,
+            condition=condition,
+            device=device,
+        )
 
         params = count_parameters(model)
         model_size = os.path.getsize(model_path) / (1024 * 1024)
 
-        print(f"Accuracy: {acc:.4f}")
+        print(f"Accuracy: {accuracy:.4f}")
         print(f"F1: {f1:.4f}")
         print(f"Latency: {avg_time:.3f} ms")
 
-        all_results[condition] = {
-            "accuracy": float(acc),
+        result = {
+            "accuracy": float(accuracy),
             "precision": float(precision),
             "recall": float(recall),
             "f1": float(f1),
@@ -199,6 +251,12 @@ def evaluate():
             "median_latency_ms": float(median_time),
             "confusion_matrix": cm.tolist(),
         }
+
+        if condition == "hard_subset":
+            result["hard_classes"] = HARD_CLASSES
+            result["metric_label_indices"] = metric_labels
+
+        all_results[condition] = result
 
     save_path = os.path.join(results_dir, f"{model_name}_multi_track.json")
 

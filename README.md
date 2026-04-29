@@ -1,190 +1,176 @@
-# EAGLE-Net: Efficient Attention for Geo-spatial Land Estimation Network
+# EAGLE-Net: Robust Satellite Image Classification
 
-A lightweight CNN with channel attention mechanisms for EuroSAT RGB satellite land-use classification (10 classes, 27,000 images).
+**A PyTorch project exploring how satellite image classifiers behave under real-world visual distortions.**
+
+EAGLE-Net compares a standard CNN baseline, a lightweight low-latency model, and a custom robustness-oriented architecture on the EuroSAT dataset. The project focuses less on chasing a single headline score and more on understanding how architecture choices affect robustness, latency, and failure modes across different image conditions.
 
 ## Project Overview
 
-**Task:** Multi-class land-use classification on EuroSAT RGB satellite imagery  
-**Dataset:** EuroSAT, 10 classes, 64×64 RGB images  
+Satellite image classification models are often evaluated on clean benchmark data, but deployed imagery can be affected by noise, blur, compression, lighting changes, resolution loss, and class-specific ambiguity. This project studies those conditions directly by training and evaluating multiple CNN architectures under a shared experimental setup.
+
+The main model, **EAGLE-Net**, is designed to improve robustness through multiscale feature extraction, channel attention, spatial gating, and anti-aliased downsampling. Its performance is compared against a larger baseline CNN and a compact depthwise-separable CNN.
+
+## Key Features
+
+- Robustness-aware training pipeline for satellite imagery.
+- Three model families with different accuracy and efficiency tradeoffs.
+- Evaluation across clean data and multiple simulated deployment distortions.
+- Saved JSON results for reproducible analysis.
+- Generated comparison plots for accuracy, F1 score, and latency tradeoffs.
+- Presentation-ready analysis notebook for reviewing findings.
+
+## Model Architectures
+
+### BaselineCNN
+
+A conventional convolutional neural network with stacked convolution, batch normalization, ReLU, and max-pooling blocks. It serves as a strong reference model for clean and standard evaluation settings.
+
+### LightweightCNN
+
+An efficient CNN built with depthwise separable convolutions. This model is optimized for lower inference latency and a smaller parameter footprint, making it useful as a deployment-oriented comparison point.
+
+### EAGLE-Net
+
+A custom robustness-focused architecture built around:
+
+- Dual-kernel inverted residual blocks for multiscale spatial features.
+- Squeeze-and-excitation attention for channel recalibration.
+- Spatial gating to emphasize informative image regions.
+- BlurPool downsampling to reduce aliasing during spatial resolution changes.
+
+## Experimental Setup
+
+**Dataset:** EuroSAT  
+**Task:** Multiclass satellite image classification  
+**Input size:** 64 x 64 RGB images  
 **Framework:** PyTorch  
-**Approach:** Lightweight CNN with CBAM/SE-style channel attention  
-**Demo:** Streamlit web application  
 
-## Directory Structure
+The models are evaluated across the following conditions:
 
-```
+- `clean`
+- `noisy`
+- `low_light`
+- `blurred`
+- `hard_subset`
+- `jpeg`
+- `color_shift`
+- `strong_noise`
+- `downscale`
+
+Results are saved under `artifacts/results/` as JSON files, with one multi-condition report per model.
+
+## Results Summary
+
+- **EAGLE-Net performs best under most distortions**, suggesting that multiscale blocks, attention, and anti-aliased downsampling improve robustness across several corruption types.
+- **BaselineCNN performs better under JPEG compression**, showing that robustness is not universal and can depend strongly on the specific distortion.
+- **LightweightCNN offers the best latency**, but its compact design comes with lower accuracy under several evaluation conditions.
+- **Robustness varies across corruption types**, so a model that is strong under noise or blur may not be the strongest under compression or resolution loss.
+
+**Note:** Hard subset metrics are computed on a filtered set of classes and are not directly comparable to full-dataset metrics.
+
+## Plots
+
+### Accuracy Across Conditions
+
+![Accuracy comparison](artifacts/plots/accuracy_comparison.png)
+
+### F1 Score Across Conditions
+
+![F1 comparison](artifacts/plots/f1_comparison.png)
+
+### Latency vs Accuracy Tradeoff
+
+![Latency tradeoff](artifacts/plots/latency_tradeoff.png)
+
+## Key Insights
+
+The central takeaway is that robustness is distribution-dependent. Architectural choices affect how models respond to different distortions, but no design should be assumed to dominate every deployment condition.
+
+EAGLE-Net provides the strongest overall robustness profile in these experiments, while the BaselineCNN and LightweightCNN highlight two important practical tradeoffs: corruption-specific resilience and inference speed. This makes the project useful not only as a model comparison, but also as a reminder that evaluation should match the conditions a model is likely to face after deployment.
+
+## Folder Structure
+
+```text
 EAGLE-Net/
-├── README.md                 # This file
-├── requirements.txt          # Python dependencies
-├── .gitignore               # Git ignore rules
-├── data/                    # Dataset directory (raw/processed)
-├── notebooks/               # Jupyter notebooks for exploration
+├── app/                     # Application or demo code
+├── artifacts/
+│   ├── models/              # Saved model checkpoints and training histories
+│   ├── plots/               # Generated comparison plots
+│   └── results/             # Evaluation results in JSON format
+├── data/                    # Local dataset storage
+├── notebooks/
+│   ├── eagle_net_analysis.ipynb
+│   └── plot_results.py      # Plot generation script
+├── report/                  # Report assets or writeups
 ├── src/
-│   ├── data/               # Dataset loading and preprocessing
-│   ├── models/             # Model definitions (BaselineCNN, LightweightCNN, EAGLENet)
-│   ├── training/           # Training logic and utilities
-│   ├── inference/          # Inference and prediction functions
-│   └── utils/              # Helper utilities (metrics, visualization, etc.)
-├── app/                    # Streamlit demo application
-├── artifacts/              # Saved models and training artifacts
-└── report/                 # Results and analysis reports
+│   ├── data/                # Dataloaders, training transforms, eval corruptions
+│   ├── models/              # BaselineCNN, LightweightCNN, and EAGLE-Net
+│   ├── training/            # Training and evaluation entry points
+│   └── utils/               # Shared configuration
+├── requirements.txt
+└── README.md
 ```
 
-## Installation
+## How to Run
 
-1. **Clone or download the repository:**
-   ```bash
-   cd EAGLE-Net
-   ```
-
-2. **Create a virtual environment (recommended):**
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
-
-3. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-## Quick Start
-
-### 1. Download Dataset
-```bash
-python src/data/download_eurosat.py
-```
-
-### 2. Train Model
-```bash
-python train.py --model eager_net --epochs 100 --batch-size 64 --lr 0.001
-```
-
-Available models: `baseline_cnn`, `lightweight_cnn`, `eager_net`
-
-### 3. Run Streamlit Demo
-```bash
-streamlit run app/streamlit_app.py
-```
-
-## Features
-
-### Models
-
-- **BaselineCNN:** Standard CNN with 4 conv blocks (baseline)
-- **LightweightCNN:** Efficient depthwise separable convolutions
-- **EAGLENet:** LightweightCNN + Channel Attention Mechanism (CBAM-style)
-
-### Training
-
-- Multi-class classification (10 EuroSAT classes)
-- Reproducible train/val/test split
-- Metrics: Accuracy, Macro F1, Precision, Recall
-- Confusion matrix visualization
-- Model checkpointing
-
-### Inference
-
-- Single image prediction
-- Top-3 class probabilities
-- Batch inference support
-
-### Visualization
-
-- Training/validation curves
-- Confusion matrix heatmap
-- Class distribution plots
-- Streamlit interactive demo
-
-## Training Configuration
-
-Default hyperparameters can be modified via command-line arguments:
+Create and activate a virtual environment:
 
 ```bash
-python train.py \
-    --model eager_net \
-    --epochs 100 \
-    --batch-size 64 \
-    --lr 0.001 \
-    --weight-decay 5e-5 \
-    --seed 42
+python -m venv .venv
 ```
 
-## Model Architecture
-
-### EAGLENet (Efficient + Attention)
-
-1. **Lightweight Backbone:**
-   - Depthwise separable convolutions for efficiency
-   - Reduced parameters vs. standard CNN
-
-2. **Channel Attention (CBAM-style):**
-   - Channel attention block (squeeze + excitation)
-   - Spatial attention block (adaptive weighting)
-   - Applied after residual blocks
-
-3. **Classification Head:**
-   - Global average pooling
-   - Fully connected layer for 10 classes
-
-## Metrics and Evaluation
-
-After training, metrics are saved to `artifacts/`:
-- Model checkpoint: `best_model.pt`
-- Training curves plot: `training_curves.png`
-- Confusion matrix: `confusion_matrix.png`
-- Metrics summary: `metrics.json`
-
-## Streamlit Demo
-
-Launch the interactive app:
+Install dependencies:
 
 ```bash
-streamlit run app/streamlit_app.py
+pip install -r requirements.txt
 ```
 
-Features:
-- Upload EuroSAT RGB images (64×64)
-- Real-time predictions
-- Top-3 class probabilities
-- Confidence scores
-- Class distribution visualization
+Train the model selected in `src/utils/config.py`:
 
-## File Descriptions
+```bash
+python -m src.training.train_model
+```
 
-| File | Purpose |
-|------|---------|
-| `train.py` | Main training script |
-| `src/data/dataset.py` | EuroSAT dataset loader |
-| `src/data/download_eurosat.py` | Dataset download utility |
-| `src/models/architectures.py` | Model definitions |
-| `src/training/trainer.py` | Training loop and validation |
-| `src/inference/predictor.py` | Inference and prediction functions |
-| `src/utils/metrics.py` | Metric computation |
-| `src/utils/visualization.py` | Plotting utilities |
-| `app/streamlit_app.py` | Streamlit demo application |
+Evaluate the trained model across all conditions:
 
-## Notes for Students
+```bash
+python -m src.training.evaluate_model
+```
 
-- **Reproducibility:** Set `--seed` to control randomness
-- **Debugging:** Use `--debug` flag for verbose logging
-- **Validation:** Check `artifacts/confusion_matrix.png` to inspect per-class performance
-- **Efficiency:** LightweightCNN uses ~40% fewer parameters than BaselineCNN
-- **Attention:** EAGLENet channel attention helps refine spatial relevance
+Generate result plots:
 
-## Dependencies
+```bash
+python notebooks/plot_results.py
+```
 
-- PyTorch 2.0.1
-- torchvision 0.15.2
-- scikit-learn (metrics)
-- matplotlib, seaborn (visualization)
-- Streamlit (web app)
-- NumPy, Pandas
+Open the analysis notebook:
 
-## License
+```bash
+jupyter notebook notebooks/eagle_net_analysis.ipynb
+```
 
-Educational project for deep learning assignment.
+To train or evaluate a different architecture, update `CONFIG["model"]["name"]` in `src/utils/config.py` to one of:
 
-## Author
+- `baseline_cnn`
+- `lightweight_cnn`
+- `eagle_net`
 
-EAGLE-Net Assignment Project
+## Future Work
+
+- Add calibration analysis to understand confidence under distribution shift.
+- Evaluate on additional satellite datasets beyond EuroSAT.
+- Test more realistic sensor and atmospheric corruptions.
+- Add class-level robustness summaries for each distortion type.
+- Explore model compression or quantization for EAGLE-Net.
+- Expand the analysis notebook with tables generated directly from JSON results.
+
+## Limitations
+
+- The evaluation is based on synthetic, corruption-based testing rather than cross-dataset validation. While this helps simulate deployment conditions, it does not fully capture real-world distribution shifts across different sensors or geographies.
+- Some distribution-shifted corruptions (e.g., strong noise and color shift) are related to training-time augmentations, so results should be interpreted as robustness under shifted rather than completely unseen conditions.
+- Hard subset metrics are computed on a filtered class distribution and are not directly comparable to full-dataset metrics.
+- The study focuses on classification performance and latency, and does not evaluate model calibration or confidence under distribution shift.
+
+## 👨‍💻 Author
+
+Created by [FuriousFire](https://github.com/FuriousFire05)
