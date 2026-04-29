@@ -4,6 +4,7 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyc
 
 # Virtual environments
 .venv/
@@ -36,6 +37,7 @@ desktop.ini
 data/raw/
 data/processed/
 data/splits/
+data/
 
 # =========================
 # Model artifacts
@@ -44,6 +46,7 @@ artifacts/models/
 *.pt
 *.pth
 *.ckpt
+*.log
 
 # =========================
 # Outputs / plots
@@ -77,3 +80,9 @@ artifacts/reports/
 # Misc
 # =========================
 *.zip
+
+# =========================
+# OS Junk
+# =========================
+.DS_Store
+Thumbs.db
