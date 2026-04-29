@@ -10,6 +10,32 @@ __pycache__/
 .venv/
 venv/
 env/
+ENV/
+
+# Python packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# =========================
+# Node / Frontend (Next.js)
+# =========================
+node_modules/
+.next/
+out/
+build/
+dist/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment variables (frontend + backend)
+.env
+.env.local
+.env.*.local
 
 # =========================
 # OS / System files
@@ -32,57 +58,56 @@ desktop.ini
 *.log
 
 # =========================
-# Data (IMPORTANT)
+# Data (DO NOT COMMIT)
 # =========================
-data/raw/
-data/processed/
-data/splits/
 data/
+!data/README.md
 
 # =========================
-# Model artifacts
+# Model artifacts (DO NOT COMMIT)
 # =========================
 artifacts/models/
 *.pt
 *.pth
 *.ckpt
-*.log
+
+# BUT KEEP RESULTS (important for portfolio)
+# DO NOT ignore artifacts/results
 
 # =========================
-# Outputs / plots
-# =========================
-artifacts/plots/
-artifacts/confusion_matrices/
-artifacts/reports/
-
-# =========================
-# Notebooks checkpoints
+# Notebooks
 # =========================
 .ipynb_checkpoints/
-
-# =========================
-# Environment / secrets
-# =========================
-.env
-
-# =========================
-# Streamlit cache
-# =========================
-.streamlit/
 
 # =========================
 # Temporary files
 # =========================
 *.tmp
 *.temp
+*.bak
+*.swp
+
+# =========================
+# Archives
+# =========================
+*.zip
+*.tar
+*.gz
+
+# =========================
+# Streamlit / cache
+# =========================
+.streamlit/
+
+# =========================
+# Docker
+# =========================
+*.pid
+*.seed
 
 # =========================
 # Misc
 # =========================
-*.zip
-
-# =========================
-# OS Junk
-# =========================
-.DS_Store
-Thumbs.db
+*.coverage
+coverage.xml
+htmlcov/
