@@ -1,4 +1,5 @@
 # src/training/evaluate_model.py
+"""Evaluate trained models across clean, corrupted, and latency conditions."""
 
 import json
 import os
@@ -28,6 +29,9 @@ from src.utils.config import CONFIG
 def get_test_indices():
     """
     Extract the exact same test indices used by the main dataloader.
+
+    Returns:
+        Sequence of dataset indices assigned to the test split.
     """
     _, _, test_loader, _ = get_dataloaders()
     return test_loader.dataset.indices
@@ -36,11 +40,28 @@ def get_test_indices():
 def get_hard_class_indices(class_names):
     """
     Convert hard class names into class indices.
+
+    Args:
+        class_names: Ordered class-name list from the EuroSAT dataset.
+
+    Returns:
+        Class indices corresponding to configured hard classes.
     """
     return [class_names.index(name) for name in HARD_CLASSES if name in class_names]
 
 
 def build_condition_loader(condition, test_indices, unseen_transforms):
+    """
+    Build a test DataLoader for one evaluation condition.
+
+    Args:
+        condition: Evaluation condition name.
+        test_indices: Dataset indices for the shared test split.
+        unseen_transforms: Mapping of extra out-of-distribution transforms.
+
+    Returns:
+        Tuple of dataloader, class names, and optional metric label subset.
+    """
     data_cfg = CONFIG["data"]
 
     image_size = data_cfg["image_size"]
@@ -61,6 +82,8 @@ def build_condition_loader(condition, test_indices, unseen_transforms):
     metric_labels = None
 
     if condition == "hard_subset":
+        # Restrict evaluation to difficult classes while preserving original
+        # class labels for metric computation.
         hard_label_indices = get_hard_class_indices(class_names)
         filtered_indices = []
 
@@ -85,6 +108,19 @@ def build_condition_loader(condition, test_indices, unseen_transforms):
 
 
 def evaluate_condition(model, loader, condition, device, metric_labels=None):
+    """
+    Evaluate classification metrics for one condition.
+
+    Args:
+        model: Trained PyTorch model.
+        loader: DataLoader for the selected evaluation condition.
+        condition: Name of the condition being evaluated.
+        device: Device used for inference.
+        metric_labels: Optional class-label subset for macro metrics.
+
+    Returns:
+        Accuracy, precision, recall, F1 score, and confusion matrix.
+    """
     all_preds = []
     all_labels = []
 
@@ -95,6 +131,8 @@ def evaluate_condition(model, loader, condition, device, metric_labels=None):
             images = images.to(device)
 
             if condition == "noisy":
+                # The noisy condition is applied in tensor space to preserve
+                # the same base image transform as the clean condition.
                 images = add_gaussian_noise_tensor(images)
 
             outputs = model(images)
@@ -126,8 +164,22 @@ def evaluate_condition(model, loader, condition, device, metric_labels=None):
 
 
 def measure_latency(model, loader, condition, device):
+    """
+    Measure per-sample inference latency for up to 100 examples.
+
+    Args:
+        model: Trained PyTorch model.
+        loader: DataLoader used to collect evaluation samples.
+        condition: Evaluation condition name.
+        device: Device used for inference.
+
+    Returns:
+        Mean and median latency in milliseconds.
+    """
     samples = []
 
+    # Collect individual samples so each timing measurement reflects a single
+    # image inference call rather than batch throughput.
     for images, _ in loader:
         if condition == "noisy":
             images = add_gaussian_noise_tensor(images)
@@ -143,6 +195,7 @@ def measure_latency(model, loader, condition, device):
     if not samples:
         return 0.0, 0.0
 
+    # Warm up kernels and caches before measuring latency.
     with torch.no_grad():
         for sample in samples[:10]:
             sample = sample.to(device)
@@ -170,6 +223,11 @@ def measure_latency(model, loader, condition, device):
 
 
 def evaluate():
+    """
+    Run multi-condition evaluation for the configured trained model.
+
+    Results are saved as a JSON file in the configured results directory.
+    """
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Using device:", device)
 
@@ -212,6 +270,8 @@ def evaluate():
     for condition in conditions:
         print(f"\n=== Evaluating on: {condition} ===")
 
+        # Rebuild the condition-specific test loader so every condition uses
+        # the same test split with only the requested transform changed.
         loader, class_names, metric_labels = build_condition_loader(
             condition=condition,
             test_indices=test_indices,

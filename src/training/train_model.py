@@ -1,4 +1,5 @@
 # src/training/train_model.py
+"""Train the configured EuroSAT classification model."""
 
 import torch
 import torch.nn as nn
@@ -12,6 +13,12 @@ from src.utils.config import CONFIG
 
 
 def train():
+    """
+    Train the configured model and save the best checkpoint plus history.
+
+    The active architecture, optimizer settings, scheduler settings, and paths
+    are read from ``CONFIG``.
+    """
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Using device:", device)
@@ -83,6 +90,8 @@ def train():
             images = images.to(device)
             labels = labels.to(device)
 
+            # Standard supervised classification step: forward pass, loss,
+            # gradient reset, backpropagation, and optimizer update.
             outputs = model(images)
             loss = criterion(outputs, labels)
 
@@ -105,6 +114,8 @@ def train():
                 images = images.to(device)
                 labels = labels.to(device)
 
+                # Validation runs without gradients and tracks aggregate
+                # accuracy across the full validation split.
                 outputs = model(images)
                 loss = criterion(outputs, labels)
 
@@ -128,6 +139,7 @@ def train():
         print(f"Val Accuracy: {val_accuracy:.2f}%")
 
         # ---- SAVE BEST MODEL ----
+        # Only the strongest validation checkpoint is kept for later evaluation.
         if val_accuracy > best_acc:
             best_acc = val_accuracy
             save_path = os.path.join(model_dir, f"{model_name}.pth")

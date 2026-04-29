@@ -1,4 +1,5 @@
 # src/data/dataloader.py
+"""Dataset transforms and DataLoader construction for EuroSAT experiments."""
 
 import torch
 from torch.utils.data import DataLoader, random_split
@@ -15,6 +16,9 @@ def get_transforms():
 
     Standard training is used for baseline/lightweight models.
     Robust training is used when enabled in config, mainly for EAGLE-Net.
+
+    Returns:
+        Tuple containing the training transform and evaluation transform.
     """
 
     image_size = CONFIG["data"]["image_size"]
@@ -36,6 +40,8 @@ def get_transforms():
         transforms.ToTensor(),
     ])
 
+    # Keep the training augmentation policy controlled by CONFIG so the same
+    # dataloader function can support baseline and robust experiments.
     if robust_training:
         train_transform = robust_train_transform
     else:
@@ -47,6 +53,9 @@ def get_transforms():
 def get_dataloaders():
     """
     Create reproducible EuroSAT train/validation/test dataloaders.
+
+    Returns:
+        Tuple of train loader, validation loader, test loader, and class names.
     """
 
     data_cfg = CONFIG["data"]
@@ -66,6 +75,8 @@ def get_dataloaders():
 
     total_size = len(full_dataset_for_split)
 
+    # Split once with a seeded generator so each model evaluates on the same
+    # train/validation/test partitions.
     train_size = int(data_cfg["train_split"] * total_size)
     val_size = int(data_cfg["val_split"] * total_size)
     test_size = total_size - train_size - val_size
@@ -78,6 +89,8 @@ def get_dataloaders():
         generator=generator,
     )
 
+    # Rebuild datasets with split-specific transforms, then reuse the exact
+    # indices generated above to avoid transform leakage across splits.
     train_dataset = EuroSAT(
         root=root,
         download=False,

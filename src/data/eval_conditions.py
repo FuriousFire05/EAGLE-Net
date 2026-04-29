@@ -1,4 +1,5 @@
 # src/data/eval_conditions.py
+"""Evaluation conditions used for multi-track robustness reporting."""
 
 from torchvision import transforms
 
@@ -14,8 +15,20 @@ HARD_CLASSES = [
 def get_eval_transform(condition: str, image_size: int):
     """
     Returns evaluation transform for different simulated deployment conditions.
+
+    Args:
+        condition: Name of the evaluation condition to simulate.
+        image_size: Target square image size for model input.
+
+    Returns:
+        Composed torchvision transform for the requested condition.
+
+    Raises:
+        ValueError: If the condition name is not recognized.
     """
 
+    # All conditions begin with the same resize step so downstream metrics are
+    # comparable across clean and corrupted inputs.
     base = [
         transforms.Resize((image_size, image_size)),
     ]
@@ -52,6 +65,13 @@ def get_eval_transform(condition: str, image_size: int):
 def add_gaussian_noise_tensor(images, std=0.05):
     """
     Adds Gaussian noise after tensor conversion.
+
+    Args:
+        images: Batch of image tensors in the range [0, 1].
+        std: Standard deviation of the Gaussian noise.
+
+    Returns:
+        Noisy image batch clamped to [0, 1].
     """
     noise = images.new_empty(images.size()).normal_(0, std)
     noisy = images + noise

@@ -1,4 +1,5 @@
 # src/models/architectures.py
+"""Neural network architectures for EuroSAT satellite image classification."""
 
 import torch
 import torch.nn as nn
@@ -9,11 +10,17 @@ class BaselineCNN(nn.Module):
     """
     Standard CNN baseline for EuroSAT classification.
     Used as the accuracy-focused reference model.
+
+    Args:
+        num_classes: Number of output classes for classification.
     """
 
     def __init__(self, num_classes=10):
+        """Initialize convolutional feature extraction and classifier layers."""
         super().__init__()
 
+        # Four convolutional stages increase channel capacity while reducing
+        # spatial resolution through max pooling.
         self.features = nn.Sequential(
             nn.Conv2d(3, 32, kernel_size=3, padding=1),
             nn.BatchNorm2d(32),
@@ -52,6 +59,7 @@ class BaselineCNN(nn.Module):
         self.classifier = nn.Linear(256, num_classes)
 
     def forward(self, x):
+        """Run a forward pass and return class logits."""
         x = self.features(x)
         x = self.pool(x)
         x = torch.flatten(x, 1)
@@ -59,9 +67,21 @@ class BaselineCNN(nn.Module):
 
 
 class DepthwiseSeparableConv(nn.Module):
+    """Depthwise separable convolution block for efficient feature extraction."""
+
     def __init__(self, in_channels, out_channels, stride=1):
+        """
+        Initialize a depthwise convolution followed by pointwise projection.
+
+        Args:
+            in_channels: Number of input feature channels.
+            out_channels: Number of output feature channels.
+            stride: Spatial stride for the depthwise convolution.
+        """
         super().__init__()
 
+        # Depthwise convolution captures spatial patterns per channel; pointwise
+        # convolution mixes information across channels.
         self.block = nn.Sequential(
             nn.Conv2d(
                 in_channels,
@@ -86,11 +106,20 @@ class DepthwiseSeparableConv(nn.Module):
         )
 
     def forward(self, x):
+        """Apply the separable convolution block to an input tensor."""
         return self.block(x)
 
 
 class LightweightCNN(nn.Module):
+    """Compact CNN using depthwise separable convolutions for lower latency."""
+
     def __init__(self, num_classes=10):
+        """
+        Initialize the lightweight classification network.
+
+        Args:
+            num_classes: Number of output classes for classification.
+        """
         super().__init__()
 
         self.stem = nn.Sequential(
@@ -114,6 +143,7 @@ class LightweightCNN(nn.Module):
         self.classifier = nn.Linear(256, num_classes)
 
     def forward(self, x):
+        """Run a forward pass and return class logits."""
         x = self.stem(x)
         x = self.features(x)
         x = self.pool(x)
@@ -122,10 +152,21 @@ class LightweightCNN(nn.Module):
 
 
 class BlurPool(nn.Module):
+    """Anti-aliasing downsampling layer implemented with a fixed blur kernel."""
+
     def __init__(self, channels, stride=2):
+        """
+        Initialize a channel-wise blur kernel.
+
+        Args:
+            channels: Number of channels the blur kernel should be repeated for.
+            stride: Downsampling stride used during convolution.
+        """
         super().__init__()
         self.stride = stride
 
+        # Build a normalized 3x3 binomial filter and repeat it so grouped
+        # convolution applies the same blur independently to each channel.
         kernel = torch.tensor([1.0, 2.0, 1.0])
         kernel = kernel[:, None] * kernel[None, :]
         kernel = kernel / kernel.sum()
@@ -134,6 +175,7 @@ class BlurPool(nn.Module):
         self.register_buffer("kernel", kernel)
 
     def forward(self, x):
+        """Blur and optionally downsample an input feature map."""
         padding = self.kernel.size(-1) // 2  # ✅ FIXED
 
         return F.conv2d(
@@ -146,11 +188,22 @@ class BlurPool(nn.Module):
 
 
 class SEBlock(nn.Module):
+    """Squeeze-and-excitation block for channel attention."""
+
     def __init__(self, channels, reduction=8):
+        """
+        Initialize channel attention layers.
+
+        Args:
+            channels: Number of input and output feature channels.
+            reduction: Reduction ratio for the intermediate attention channels.
+        """
         super().__init__()
 
         reduced_channels = max(8, channels // reduction)
 
+        # Global pooling summarizes each channel; 1x1 convolutions produce
+        # per-channel gates in the range [0, 1].
         self.block = nn.Sequential(
             nn.AdaptiveAvgPool2d(1),
             nn.Conv2d(channels, reduced_channels, kernel_size=1),
@@ -160,11 +213,20 @@ class SEBlock(nn.Module):
         )
 
     def forward(self, x):
+        """Apply channel-wise attention to an input feature map."""
         return x * self.block(x)
 
 
 class SpatialGate(nn.Module):
+    """Spatial attention gate using average and max feature summaries."""
+
     def __init__(self, kernel_size=7):
+        """
+        Initialize the spatial gating convolution.
+
+        Args:
+            kernel_size: Kernel size used to compute the spatial attention map.
+        """
         super().__init__()
 
         padding = kernel_size // 2
@@ -175,6 +237,8 @@ class SpatialGate(nn.Module):
         )
 
     def forward(self, x):
+        """Apply spatial attention and return gated feature maps."""
+        # Average and max projections provide complementary spatial summaries.
         avg_map = torch.mean(x, dim=1, keepdim=True)
         max_map, _ = torch.max(x, dim=1, keepdim=True)
         gate = self.gate(torch.cat([avg_map, max_map], dim=1))
@@ -182,7 +246,19 @@ class SpatialGate(nn.Module):
 
 
 class DualKernelInvertedResidual(nn.Module):
+    """EAGLE-Net block with expansion, dual-kernel depthwise branches, and projection."""
+
     def __init__(self, in_channels, out_channels, expansion=2, stride=1, use_se=False):
+        """
+        Initialize an inverted residual block with 3x3 and 5x5 depthwise paths.
+
+        Args:
+            in_channels: Number of input feature channels.
+            out_channels: Number of projected output channels.
+            expansion: Multiplier used to expand hidden channel width.
+            stride: Spatial stride; stride 2 uses BlurPool downsampling.
+            use_se: Whether to apply squeeze-and-excitation channel attention.
+        """
         super().__init__()
 
         hidden_channels = in_channels * expansion
@@ -191,6 +267,7 @@ class DualKernelInvertedResidual(nn.Module):
 
         self.use_residual = stride == 1 and in_channels == out_channels
 
+        # Expand channels before splitting into separate spatial-kernel branches.
         self.expand = nn.Sequential(
             nn.Conv2d(in_channels, hidden_channels, kernel_size=1, bias=False),
             nn.BatchNorm2d(hidden_channels),
@@ -199,6 +276,8 @@ class DualKernelInvertedResidual(nn.Module):
 
         self.blur = BlurPool(hidden_channels) if stride == 2 else nn.Identity()
 
+        # Parallel depthwise branches capture local and wider spatial context
+        # without the cost of full convolutions.
         self.dw3 = nn.Sequential(
             nn.Conv2d(branch_channels, branch_channels, kernel_size=3, padding=1, groups=branch_channels, bias=False),
             nn.BatchNorm2d(branch_channels),
@@ -219,11 +298,13 @@ class DualKernelInvertedResidual(nn.Module):
         )
 
     def forward(self, x):
+        """Run the dual-kernel residual block and return projected features."""
         identity = x
 
         x = self.expand(x)
         x = self.blur(x)
 
+        # Split expanded channels between the 3x3 and 5x5 depthwise branches.
         c = x.size(1)
         c_half = c // 2
         x3, x5 = x[:, :c_half, :, :], x[:, c_half:, :, :]
@@ -239,7 +320,15 @@ class DualKernelInvertedResidual(nn.Module):
 
 
 class EAGLENet(nn.Module):
+    """Robust satellite image classifier built from dual-kernel residual blocks."""
+
     def __init__(self, num_classes=10):
+        """
+        Initialize the EAGLE-Net architecture.
+
+        Args:
+            num_classes: Number of output classes for classification.
+        """
         super().__init__()
 
         self.stem = nn.Sequential(
@@ -269,6 +358,7 @@ class EAGLENet(nn.Module):
         self.classifier = nn.Linear(256, num_classes)
 
     def forward(self, x):
+        """Run a forward pass and return class logits."""
         x = self.stem(x)
         x = self.stage1(x)
         x = self.stage2(x)
@@ -283,6 +373,19 @@ class EAGLENet(nn.Module):
 
 
 def create_model(model_name="eagle_net", num_classes=10):
+    """
+    Create a model instance by name.
+
+    Args:
+        model_name: Architecture identifier.
+        num_classes: Number of output classes for classification.
+
+    Returns:
+        Instantiated PyTorch model.
+
+    Raises:
+        ValueError: If the requested model name is not supported.
+    """
     if model_name == "baseline_cnn":
         return BaselineCNN(num_classes)
 
@@ -296,4 +399,13 @@ def create_model(model_name="eagle_net", num_classes=10):
 
 
 def count_parameters(model):
+    """
+    Count trainable parameters in a model.
+
+    Args:
+        model: PyTorch module to inspect.
+
+    Returns:
+        Number of parameters with ``requires_grad=True``.
+    """
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
