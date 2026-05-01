@@ -452,6 +452,76 @@ http://localhost:8000
 
 ---
 
+## Running with Docker
+
+The full-stack demo can also be run with Docker Compose.
+
+### 1. Ensure model checkpoints exist locally
+
+The backend expects trained model checkpoints at:
+
+```text
+artifacts/models/
+```
+
+---
+
+## Running with Docker
+
+The full-stack demo can also be run with Docker Compose.
+
+### 1. Ensure model checkpoints exist locally
+
+The backend expects trained model checkpoints at:
+
+```text
+artifacts/models/
+````
+
+Expected files:
+
+```text
+baseline_cnn.pth
+lightweight_cnn.pth
+eagle_net.pth
+```
+
+These files are not committed to GitHub and must be generated or placed locally before running the Docker app.
+
+### 2. Build the containers
+
+```bash
+docker compose build
+```
+
+### 3. Start the app
+
+```bash
+docker compose up
+```
+
+### 4. Open the app
+
+Frontend:
+
+```text
+http://localhost:3000
+```
+
+Backend health check:
+
+```text
+http://localhost:8000/health
+```
+
+To stop the app:
+
+```bash
+docker compose down
+```
+
+---
+
 ## Security Notes
 
 The demo includes basic upload validation intended for local development and portfolio demonstration:
