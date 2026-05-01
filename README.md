@@ -462,20 +462,6 @@ The backend expects trained model checkpoints at:
 
 ```text
 artifacts/models/
-```
-
----
-
-## Running with Docker
-
-The full-stack demo can also be run with Docker Compose.
-
-### 1. Ensure model checkpoints exist locally
-
-The backend expects trained model checkpoints at:
-
-```text
-artifacts/models/
 ````
 
 Expected files:
