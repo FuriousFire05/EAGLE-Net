@@ -177,7 +177,7 @@ EAGLE-Net/
 |   `-- utils/
 |-- requirements.txt
 |-- README.md
-`-- LICENCE
+`-- LICENSE
 ```
 
 ---
@@ -397,7 +397,7 @@ The backend loads all demo models at startup. If any expected checkpoint is miss
 python -m venv .venv
 ```
 
-Activate the environment, then install the research dependencies:
+Activate the environment, then install the project dependencies:
 
 ```bash
 pip install -r requirements.txt
