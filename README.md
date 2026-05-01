@@ -43,6 +43,8 @@ This project emphasizes **how models behave**, not just how they score.
 - JSON-based result storage for reproducibility
 - Comparison plots for accuracy, F1 score, and latency
 - Presentation-ready analysis notebook
+- Interactive FastAPI + Next.js demo for upload-based inference
+- Side-by-side model comparison under selected distortion conditions
 
 ---
 
@@ -84,7 +86,7 @@ A custom robustness-focused architecture incorporating:
 
 - **Dataset:** EuroSAT
 - **Task:** Multiclass satellite image classification
-- **Input Size:** 64 × 64 RGB images
+- **Input Size:** 64 x 64 RGB images
 - **Framework:** PyTorch
 
 Models are evaluated across the following conditions:
@@ -114,7 +116,7 @@ artifacts/results/
 - **LightweightCNN achieves the lowest latency**, but sacrifices accuracy under several conditions.
 - **Robustness varies across corruption types**, meaning strong performance under one distortion does not guarantee performance under others.
 
-> **Key Insight:** Robustness is distribution-dependent — different architectures specialize in different types of visual distortions.
+> **Key Insight:** Robustness is distribution-dependent - different architectures specialize in different types of visual distortions.
 
 **Note:** Hard subset metrics are computed on a filtered set of classes and are not directly comparable to full-dataset metrics.
 
@@ -152,20 +154,30 @@ This makes the project valuable not only for model comparison, but also for unde
 
 ```text
 EAGLE-Net/
-├── artifacts/
-│   ├── plots/
-│   └── results/
-├── notebooks/
-│   ├── eagle_net_analysis.ipynb
-│   └── plot_results.py
-├── src/
-│   ├── data/
-│   ├── models/
-│   ├── training/
-│   └── utils/
-├── requirements.txt
-├── README.md
-└── LICENSE
+|-- app/
+|   |-- backend/
+|   |   |-- core/
+|   |   |-- routes/
+|   |   `-- main.py
+|   `-- frontend/
+|       |-- app/
+|       |-- public/
+|       `-- package.json
+|-- artifacts/
+|   |-- models/
+|   |-- plots/
+|   `-- results/
+|-- notebooks/
+|   |-- eagle_net_analysis.ipynb
+|   `-- plot_results.py
+|-- src/
+|   |-- data/
+|   |-- models/
+|   |-- training/
+|   `-- utils/
+|-- requirements.txt
+|-- README.md
+`-- LICENCE
 ```
 
 ---
@@ -222,6 +234,276 @@ Options:
 
 ---
 
+## Interactive Demo App
+
+The project includes an interactive demo layer for running local model inference from a browser.
+
+The demo allows users to:
+
+- Upload a satellite image
+- Select a distortion condition
+- Run inference through the backend
+- Compare predictions, confidence scores, and latency across the available models
+
+The app is intended as a portfolio-ready interface for exploring the same robustness questions studied in the research workflow. It does not replace the experimental evaluation pipeline or change the reported benchmark results.
+
+Supported demo conditions:
+
+- `clean`
+- `noise`
+- `blur`
+- `low_light`
+- `jpeg`
+
+Model checkpoint files are not committed to the repository. For inference to work, trained checkpoint files must exist locally under:
+
+```text
+artifacts/models/
+```
+
+Expected checkpoint names:
+
+```text
+artifacts/models/baseline_cnn.pth
+artifacts/models/lightweight_cnn.pth
+artifacts/models/eagle_net.pth
+```
+
+---
+
+## App Architecture
+
+The app is split into a FastAPI backend and a Next.js frontend:
+
+- **Backend:** FastAPI service in `app/backend/`
+- **Frontend:** Next.js + Tailwind interface in `app/frontend/`
+- **Models:** PyTorch architectures from `src/models/architectures.py`
+- **Inference:** Model loading and prediction utilities in `app/backend/core/`
+- **Artifacts:** Local model checkpoints loaded from `artifacts/models/`
+
+High-level request flow:
+
+```text
+User uploads image in browser
+        |
+        v
+Next.js frontend sends image + selected condition
+        |
+        v
+FastAPI backend validates and preprocesses the image
+        |
+        v
+Backend applies the selected distortion condition
+        |
+        v
+Backend runs inference with one or more trained models
+        |
+        v
+Frontend displays predictions, confidence, and latency
+```
+
+---
+
+## Backend API
+
+Base local URL:
+
+```text
+http://localhost:8000
+```
+
+### Health Check
+
+```http
+GET /health
+```
+
+Example response:
+
+```json
+{
+  "status": "ok"
+}
+```
+
+### Single Model Prediction
+
+```http
+POST /predict
+```
+
+Accepts an uploaded image and runs inference for a selected model.
+
+Parameters:
+
+- `file`: uploaded image
+- `model_name`: one of `baseline_cnn`, `lightweight_cnn`, `eagle_net`
+- `condition`: one of `clean`, `noise`, `blur`, `low_light`, `jpeg`
+
+### Model Comparison
+
+```http
+POST /compare
+```
+
+Runs the uploaded image through all available demo models under the selected condition.
+
+FormData:
+
+- `file`: uploaded image
+- `condition`: one of `clean`, `noise`, `blur`, `low_light`, `jpeg`
+
+Example request:
+
+```bash
+curl -X POST "http://localhost:8000/compare" \
+  -F "file=@sample_satellite_image.jpg" \
+  -F "condition=noise"
+```
+
+Example response:
+
+```json
+{
+  "condition": "noise",
+  "results": [
+    {
+      "model": "baseline_cnn",
+      "prediction": "Forest",
+      "confidence": 0.82,
+      "latency_ms": 1.0
+    }
+  ]
+}
+```
+
+---
+
+## Running the Full App Locally
+
+### 1. Prepare model checkpoints
+
+Train or place the required model checkpoints in:
+
+```text
+artifacts/models/
+```
+
+The backend loads all demo models at startup. If any expected checkpoint is missing, the API will fail to start inference correctly.
+
+### 2. Install Python dependencies
+
+```bash
+python -m venv .venv
+```
+
+Activate the environment, then install the research dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+If the FastAPI app dependencies are not already installed in your environment, install them as well:
+
+```bash
+pip install fastapi uvicorn python-multipart
+```
+
+### 3. Start the backend
+
+From the project root:
+
+```bash
+uvicorn app.backend.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+Verify the backend:
+
+```text
+http://localhost:8000/health
+```
+
+### 4. Install frontend dependencies
+
+In a second terminal:
+
+```bash
+cd app/frontend
+npm install
+```
+
+### 5. Start the frontend
+
+```bash
+npm run dev
+```
+
+Open:
+
+```text
+http://localhost:3000
+```
+
+The frontend expects the backend to be available at:
+
+```text
+http://localhost:8000
+```
+
+---
+
+## Security Notes
+
+The demo includes basic upload validation intended for local development and portfolio demonstration:
+
+- Accepted image types are JPEG, PNG, and WEBP.
+- Uploaded files are limited to 5 MB.
+- Uploaded files are decoded with Pillow and converted to RGB before inference.
+- CORS is configured for local frontend access from `http://localhost:3000`.
+
+Before exposing this app publicly, recommended hardening includes:
+
+- Move CORS origins to environment-specific configuration.
+- Add authentication or rate limiting for public deployments.
+- Store uploaded files only when necessary, and prefer temporary processing.
+- Add request logging and structured error handling.
+- Run inference behind a production server configuration.
+- Validate model availability during deployment startup.
+
+---
+
+## Screenshots / Demo Preview
+
+Screenshots or a short demo GIF can be added here after the local app UI is finalized.
+
+Suggested preview assets:
+
+- Upload screen
+- Distortion condition selector
+- Model comparison results
+- Latency and confidence display
+
+```text
+TODO: Add demo screenshot or GIF.
+```
+
+---
+
+## Deployment Roadmap
+
+Planned deployment improvements:
+
+- Package the FastAPI backend with a production ASGI server.
+- Add environment-based configuration for API URLs and CORS origins.
+- Add a reproducible checkpoint download or artifact restore step.
+- Containerize backend and frontend services.
+- Add frontend production build verification.
+- Add API tests for `/health`, `/predict`, and `/compare`.
+- Add lightweight monitoring for inference latency and backend errors.
+- Document cloud deployment options once model hosting constraints are finalized.
+
+---
+
 ## Limitations
 
 - Evaluation is based on synthetic corruption-based testing rather than cross-dataset validation.
@@ -241,7 +523,7 @@ Options:
 
 ---
 
-## 👨‍💻 Author
+## Author
 
 Created by [FuriousFire](https://github.com/FuriousFire05)
 
