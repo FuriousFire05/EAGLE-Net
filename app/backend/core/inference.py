@@ -1,16 +1,26 @@
 # app/backend/core/inference.py
 
 import time
+
 import torch
 import torch.nn.functional as F
 
 from app.backend.core.model_registry import model_registry
 
-# You can import class names from your dataset if needed
-from src.data.dataloader import get_dataloaders
-
-# Load class names once
-_, _, _, CLASS_NAMES = get_dataloaders()
+# EuroSAT RGB class order from torchvision.datasets.EuroSAT.
+# Keeping this fixed avoids loading/downloading the dataset just to start the API.
+CLASS_NAMES = [
+    "AnnualCrop",
+    "Forest",
+    "HerbaceousVegetation",
+    "Highway",
+    "Industrial",
+    "Pasture",
+    "PermanentCrop",
+    "Residential",
+    "River",
+    "SeaLake",
+]
 
 
 def run_inference(model_name: str, input_tensor: torch.Tensor):
